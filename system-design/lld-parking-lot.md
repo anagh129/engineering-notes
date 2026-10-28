@@ -382,3 +382,184 @@ What would you like me to dig into, or is there a requirement I should revisit?
 
 
 # Last: Go through
+
+
+# Q1 Parking Lot: Design Preparation
+
+**Requirement sentence (from the interviewer):**
+"Design a multi-level parking lot that supports different vehicle types (bike, car, truck). It should issue a ticket on entry and calculate the fee on exit."
+
+---
+
+## 1. Pull the nouns and verbs
+
+### Nouns: candidates for classes
+
+| Noun | Decision | Why |
+|---|---|---|
+| parking lot | **Class** `ParkingLot` | The entry point that coordinates everything |
+| level / floor | **Class** `ParkingFloor` | Groups spots, has its own number |
+| spot | **Class** `ParkingSpot` | Has its own state (free or occupied) and its own lock |
+| vehicle | **Class** `Vehicle` | Has a plate and a type |
+| bike, car, truck | **Subclasses or enum** | See the trade-off in section 3 |
+| ticket | **Class** `Ticket` | Holds the entry time, vehicle and spot |
+| spot size (small, medium, large) | **Enum** `SpotType` | A fixed set of values with no behavior |
+| vehicle type | **Enum** `VehicleType` | Same reason |
+| license plate, entry time | **Attributes** | Data on `Vehicle` and `Ticket`, not classes |
+| fee | **Not a class** | A number returned by a pricing method |
+| entry / exit | **Not classes** | Gates are out of scope. They map to the `park` and `unpark` methods |
+| payment | **Optional class** | Mocked for this round. Add `Payment` only if asked |
+
+### Verbs: candidates for methods
+
+| Verb in the requirement | Method | Lives on |
+|---|---|---|
+| issue a ticket (on entry) | `park(vehicle)` | `ParkingLot` |
+| calculate the fee (on exit) | `calculate_fee(ticket, exit_time)` | `PricingStrategy` |
+| exit | `unpark(ticket_id)` | `ParkingLot` |
+| (implied) find a free spot | `find_spot(floors, vehicle)` | `SpotAllocationStrategy` |
+| (implied) occupy a spot | `try_park(vehicle)` | `ParkingSpot` |
+| (implied) release a spot | `free()` | `ParkingSpot` |
+| (implied) check availability | `is_free()`, `available_count()` | `ParkingSpot`, `ParkingFloor` |
+
+Implied verbs are not in the sentence but follow from it. Park, unpark and fee are the stated ones. The rest are what the code needs to make those work.
+
+---
+
+## 2. One responsibility per class
+
+| Class | Its one job | It must NOT do |
+|---|---|---|
+| `ParkingLot` | Coordinate park and unpark | Choose spots or calculate fees itself |
+| `ParkingFloor` | Hold spots and report availability | Issue tickets |
+| `ParkingSpot` | Track whether it is free, safely | Know about pricing or floors above it |
+| `Vehicle` | Carry plate and type | Know where it is parked |
+| `Ticket` | Record one parking session | Calculate its own fee |
+| `SpotAllocationStrategy` | Decide which spot to give | Change spot state |
+| `PricingStrategy` | Turn a ticket and exit time into a fee | Touch spots or tickets' storage |
+
+**The split I'd call out in the interview:** a first draft often puts spot-finding and fee logic inside `ParkingLot`. That gives the class three jobs: coordinating, allocating and pricing. Allocation and pricing both change often for different reasons, so each moves into its own strategy class. `ParkingLot` is left as a thin coordinator.
+
+**Test to run on each class:** "Can I describe it without using the word *and*?" If not, split it.
+
+---
+
+## 3. Relationships: has-a vs is-a
+
+### Has-a (composition and aggregation)
+
+| Relationship | Type | Reasoning |
+|---|---|---|
+| `ParkingLot` has many `ParkingFloor` | Composition | A floor has no meaning outside its lot |
+| `ParkingFloor` has many `ParkingSpot` | Composition | Same reason |
+| `ParkingSpot` holds 0 or 1 `Vehicle` | Aggregation | A vehicle exists before and after parking |
+| `ParkingLot` has a `SpotAllocationStrategy` | Aggregation (injected) | Passed in through the constructor, so it can be swapped or mocked |
+| `ParkingLot` has a `PricingStrategy` | Aggregation (injected) | Same reason |
+| `Ticket` refers to a `Vehicle` and a `ParkingSpot` | Association | It only points at them |
+
+### Is-a (inheritance): used sparingly
+
+| Relationship | Reasoning |
+|---|---|
+| `Bike`, `Car`, `Truck` extend `Vehicle` | Optional, see the note below |
+| `LowestFloorFirstStrategy` implements `SpotAllocationStrategy` | Real polymorphism: different algorithms, same interface |
+| `HourlyPricing` implements `PricingStrategy` | Same reason |
+
+**Honest trade-off to mention:** in my code `Bike`, `Car` and `Truck` add no behavior. They only set the `type` field, so the `VehicleType` enum alone would do the job. I kept subclasses because they read naturally, but I'd say so out loud: "I'd switch to just the enum unless vehicles gain type-specific behavior." The strategy inheritance is the one that really earns its place.
+
+**Why composition first:** strategies are injected, not inherited. That is what lets you change pricing without touching `ParkingLot`, and it is easier to unit test.
+
+---
+
+## 4. Class diagram (sketch before coding)
+
+### Whiteboard version (what you'd draw by hand)
+
+```
+                    +-------------+
+        +---------->| ParkingLot  |<----------+
+        |           +-------------+           |
+        | uses            | has many          | uses
++--------------------+    v         +------------------+
+| SpotAllocation     |  +--------------+  | PricingStrategy  |
+| Strategy <<iface>> |  | ParkingFloor |  |   <<iface>>      |
++--------------------+  +--------------+  +------------------+
+        ^                     | has many           ^
+        |                     v                    |
++--------------------+  +--------------+  +------------------+
+| LowestFloorFirst   |  | ParkingSpot  |  | HourlyPricing    |
++--------------------+  +--------------+  +------------------+
+                              | holds 0..1
+                              v
+                        +-----------+        +--------+
+                        |  Vehicle  |<-------| Ticket |
+                        +-----------+        +--------+
+                        ^     ^     ^        (also points to ParkingSpot)
+                      Bike   Car   Truck
+```
+
+### Mermaid version (renders on GitHub and most markdown viewers)
+
+```mermaid
+classDiagram
+    class ParkingLot {
+        -floors
+        -allocator
+        -pricing
+        -active_tickets
+        +park(vehicle) Ticket
+        +unpark(ticket_id) float
+    }
+    class ParkingFloor {
+        +number
+        +spots
+        +available_count(spot_type) int
+    }
+    class ParkingSpot {
+        +id
+        +type
+        +try_park(vehicle) bool
+        +free()
+        +is_free() bool
+    }
+    class Vehicle {
+        +plate
+        +type
+    }
+    class Ticket {
+        +id
+        +vehicle
+        +spot
+        +entry_time
+    }
+    class SpotAllocationStrategy {
+        <<interface>>
+        +find_spot(floors, vehicle) ParkingSpot
+    }
+    class PricingStrategy {
+        <<interface>>
+        +calculate_fee(ticket, exit_time) float
+    }
+
+    ParkingLot "1" *-- "many" ParkingFloor
+    ParkingFloor "1" *-- "many" ParkingSpot
+    ParkingSpot "1" o-- "0..1" Vehicle : holds
+    ParkingLot o-- SpotAllocationStrategy
+    ParkingLot o-- PricingStrategy
+    ParkingLot ..> Ticket : creates
+    Ticket --> Vehicle
+    Ticket --> ParkingSpot
+    Vehicle <|-- Bike
+    Vehicle <|-- Car
+    Vehicle <|-- Truck
+    SpotAllocationStrategy <|.. LowestFloorFirstStrategy
+    PricingStrategy <|.. HourlyPricing
+```
+
+**Reading the arrows:** a filled diamond (`*--`) means composition, a hollow diamond (`o--`) means aggregation, a plain arrow means association, a dashed arrow means dependency, and a triangle means inheritance or interface implementation.
+
+---
+
+## How I'd say this out loud (30 seconds)
+
+"From the requirement I get these nouns: lot, floor, spot, vehicle, ticket. Those are my classes. Spot size and vehicle type are fixed sets of values, so I'll make them enums. Fee is just a number, so it isn't a class. The verbs give me `park`, `unpark` and `calculate_fee`. Allocation and pricing are the parts most likely to change, so I'll put each behind an interface and inject it into the lot. The lot owns floors and floors own spots, so those are composition. Strategies are injected, so those are aggregation."
