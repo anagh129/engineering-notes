@@ -370,3 +370,7 @@ Key signals are queue depth and oldest-message age (indexing lag), bulk success/
 ### Q15. If you had to explain this project in one minute, what would you say?
 
 "Our message search was built on one design that worked at billions of messages but broke at larger scale. A fragile queue dropped messages, large mixed batches made one node failure hit many operations, giant clusters were hard to upgrade, and our biggest customers hit a hard document limit. I redesigned it with a durable queue, a Python/async-style router that batches per destination, many small clusters on Kubernetes, dedicated multi-shard clusters for the biggest tenants, and a zero-downtime migration process. As a result, we index trillions of messages at twice the throughput, median search latency went from about 500 ms to under 100 ms, and upgrades now happen with no downtime."
+
+![alt text](image.png)
+
+![alt text](image-1.png)
